@@ -1,0 +1,124 @@
+---
+title: "persee extraction of search results - Suédois - example"
+author: "Max Odsbjerg Pedersen"
+date: "1/20/2020"
+output: html_document
+---
+# Loading packages
+```{r message=FALSE}
+library(rvest)
+library(tidyverse)
+library(writexl)
+```
+
+The extraction of data from various searches in Persée is done in the software programme R. R offers various methods for statistical analysis and graphic representation of the results. In R, one works with packages each adding numerous functionalities to the core of R-functions.<br>
+
+The corner package in extracting the data from the Persée-searches is [rvest](https://blog.rstudio.com/2014/11/24/rvest-easy-web-scraping-with-r/). This package makes it easy to perform webscraping task, which our extraction of data from Persée is. 
+ <br>
+ The [Tidyverse](https://www.tidyverse.org)-package is a collection of R packages that share the same underlying design philosophy, data structures and grammar, which is designed for working with data science.
+<br> 
+The final package is the [writexl](https://github.com/ropensci/writexl), which is used for exporting the dataframes containing the search results from R to the more sharable excel file format. 
+
+# Example of extracting the results from the search "modèle suédois" 
+When searching for "modèle suédois" in Persée you get 290 results on the following pages: <br> https://www.persee.fr/search?ta=article&q=%22modèle+suédois%22 <br>
+This page none the less doesn't contain all the 290 results. I contains the first ten hits in the search and when the users scrolls to the bottom of these ten result the page will load another ten. This will continue to happen as long as the user keeps scrolling or until all 290 results have been loaded. In reality the one page is constructed of 29 html-pages, each containing 10 results from the search. This is very smart as the user don't have to load all results on less it is absolutely nessesary. From an extraction point of view it makes it more complex. First we will read in the first results of the 290 results search into R in ordner to extract the relevant information.
+The web page that contains the first 10 hits is located at the following ULR: <br> 
+https://www.persee.fr/search/page?p=0&q=%22modèle+suédois%22&ta=article
+This URL gives the exact same ten results as <br>
+https://www.persee.fr/search?ta=article&q=%22modèle+suédois%22 <br> 
+but without alot of the graphical things from the Persée main site. 
+
+The first 10 results is found at <br> 
+https://www.persee.fr/search/page?p=0&q=%22modèle+suédois%22&ta=article <br>
+the next 10 results is found at <br>
+https://www.persee.fr/search/page?p=1&q=%22modèle+suédois%22&ta=article <br>
+and the ten at <br>
+https://www.persee.fr/search/page?p=2&q=%22modèle+suédois%22&ta=article <br>
+10 more
+https://www.persee.fr/search/page?p=3&q=%22modèle+suédois%22&ta=article
+
+<br> 
+The pattern is here that "https://www.persee.fr/search/page?p=" rises with 1 for each 10 results you load. 
+ <br> 
+ So lets read in the first 10 results:
+ 
+
+```{r}
+suedois <- read_html("https://www.persee.fr/search/page?p=0&q=%22modèle+suédois%22&ta=article")
+```
+
+
+
+```{r}
+suedois %>% 
+  html_nodes("div.doc-result") %>% 
+  map(function(x) tibble(
+    author = html_node(x,"div.contributors") %>% html_text(trim = TRUE),
+    title = html_node(x,"a.left-picto.title-limited.title.picto.long,a.title.title-free") %>% html_text(trim = TRUE),
+    year = html_node(x,"span.documentYear") %>% html_text(trim = TRUE),
+    searchcontext = html_node(x,"div.searchContext") %>% html_text(trim = TRUE),
+    publication = html_node(x,"span.collection") %>% html_text(trim = TRUE),
+    link = html_node(x,"a.left-picto.title-limited.title.picto.long,a.title.title-free") %>% html_attr("href"))) %>% 
+  bind_rows() -> t1
+```
+<br> 
+All the html_nodes in the code above specifies where in the html-code that the different information is found. If we take a look at the dataframe t1, we see that it contains the first 10 results from the search in a tabular dataframe. Nice!
+
+```{r}
+t1
+```
+<br>
+In order to get our hands on all of the 290 results from the search, we need to perform the above code on all URLs that contains results from the search Since the result is 290 and each page contains 10 results we need 28 URLs( not 29 since 0 is a page with results):
+
+```{r}
+url <- c()
+
+for(i in 1:28){
+  url1 <- paste0("https://www.persee.fr/search/page?p=", i, "&q=%22modèle+suédois%22&ta=article")
+  url <- append(url, url1)
+  }
+
+```
+
+<br>
+Now we preform the same task as before on every 28 URLs:
+
+```{r}
+for (chr in url){
+  read_html(chr) %>% 
+  html_nodes("div.doc-result") %>% 
+  map(function(x) tibble(
+    author = html_node(x,"div.contributors") %>% html_text(trim = TRUE),
+    title = html_node(x,"a.left-picto.title-limited.title.picto.long,a.title.title-free") %>% html_text(trim = TRUE),
+    year = html_node(x,"span.documentYear") %>% html_text(trim = TRUE),
+    searchcontext = html_node(x,"div.searchContext") %>% html_text(trim = TRUE),
+    publication = html_node(x,"span.collection") %>% html_text(trim = TRUE),
+    link = html_node(x,"a.left-picto.title-limited.title.picto.long,a.title.title-free") %>% html_attr("href"))) %>% 
+    bind_rows() -> t
+    bind_rows(t1, t) -> t1
+  Sys.sleep(1)
+}
+```
+
+From the result each year is noted as "AnnéeYYYY". Lets just remove all the "Année"'s: 
+
+```{r}
+t1 %>% 
+  mutate(year =
+           str_remove_all(year, "Année")) %>% 
+  mutate(year =
+           as.double(year)) -> t1
+```
+<br>
+Lets examine our new dataframe:
+```{r}
+t1
+```
+<br> 
+290 rows! The operation has worked and we now have all results in one dataframe. Time på print it to excel: 
+
+```{r}
+write_xlsx(t1, "modele-suedois.xlsx")
+```
+
+
