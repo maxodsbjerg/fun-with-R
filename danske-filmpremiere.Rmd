@@ -1,0 +1,236 @@
+---
+title: "Danske filmpremierer"
+author:
+  - Per Møldrup-Dalum, Det Kgl. Bibliotek
+  - Max Odsbjerg Pedersen, AU Library - Det Kgl. Bibliotek
+date: "5/18/2020"
+output: 
+    html_document:
+      df_print: paged
+---
+
+```{r, message=FALSE}
+library(tidyverse)
+library(stringr)
+library(rvest)
+library(urltools)
+```
+
+
+Dette lille webscrape projekt falder i to dele:
+
+1. Webscrape af film der har premiere som udlånsfilm fra [Foreningen af Filmudlejere i Danmark - fafid](fafid.dk). Denne del er lavet af [Per Møldrup-Dalum](https://github.com/perdalum). 
+2. Berigelse af premierefilmenes fra fafid med deres individuelle IMDB-scores og beskrivelser. Denne del er laver af [Max Odsbjerg Pedersen](https://github.com/maxodsbjerg)
+
+
+# Webscrape af danske premierer fra fafid.dk
+
+Danske filmpremierer kan læses på `http://fafid.dk/movies.php`
+
+For grundlæggende introduktion af rvest pakken se: https://blog.rstudio.com/2014/11/24/rvest-easy-web-scraping-with-r/
+
+```{r}
+"http://fafid.dk/movies.php" %>% 
+  read_html() %>% 
+  html_node("table") %>% 
+  html_table() %>% 
+  # Næste linie skyldes at hver anden linie i tabellen indeholder metadata?!?
+  filter(row_number() %% 2 == 1) %>% 
+  mutate(Titel = str_remove(Titel, "-.+$")) -> premierer
+premierer
+```
+<br>
+Hvornår har [Undtagelsen](https://press.sfstudios.dk/pressweb/583d6482418e8/line-up/cinema/5c6282e59c0ab/page?type=all) dansk premiere?
+
+```{r}
+premierer %>% filter(str_detect(Titel, "Undtagelsen")) %>% select(Titel, Premiere)
+```
+<br> 
+
+```{r}
+premierer %>% filter(str_detect(Titel, "Weathering")) %>% select(Titel, Premiere)
+```
+
+
+
+
+# Men er de så noget ved?  Berigelse med IMDB-score
+Vi starter med at tage de første femten. Det bliver noget med et for-loop, så vi vil ikke igennem alle 136 med det samme. Også fordi vi er nice-guys og indlægger en sys.sleep for ikke at vælte serveren. (det gør femten forespørgsler nok ikke, men før man ved af det har man skaleret op.). Vi bruger `slice`til at klippe op:  
+
+```{r}
+sample <- premierer %>% 
+  slice(1:15)
+```
+
+<br>
+Vi har brug for en form for forbindelse mellem filmene i `sample` og deres respektive IMDB-sider. Vi kigger på URL til *Kød & Blod*s IMDB-side:
+
+>  htt<span>ps://www.imdb<span>.com/title/tt8386958/?ref_=fn_al_tt_1
+
+Vi kan altså se, at der ikke er noget i URL'en, der umiddelbart indikerer, at der er tale om *Kød & Blod*. Derfor er vi nødt til at foretage en mellemregning der finder de enkelte IMDB-sider for hver titel. Til dette bruger vi IMDB's søgefunktion: 
+
+![](pics/imdb_search.png)
+Billedet ovenfor viser søgeresultatet af en søgningen på *Kød & Blod*. På denne side identificeres det første resultatet som den film vi er ude efter fordi titlen og premiere år passer sammen. Vi kan altså udtrække linket der går ind til *Kød & Blod*s individuelle IMDB-side via siden med resultaterne på en søgning på "Kød & Blod". Vi har altså nu en forbindelse mellem filmtitel og den pågældende films individuelle IMDB-side. Vores mellemregning er med andre ord at lave en søgning på hver filmtitel og udtrække linket til filmens IMDB-side. I denne mellemregning antager vi at den pågældende film vil lægge som det øverste resultat. 
+
+Men hvordan får vi så lavet disse søgninger på en smart og maskinel måde? 
+
+
+# Konstruktion af søge-URL til de enkelte film
+
+Lad os se nærmere på URLen til søgningen på *Kød & Blod*:
+
+>  htt<span>ps://www.imdb.com/find?q=K%C3%B8d+%26+Blod&ref_=nv_sr_sm
+
+Denne URL vil vi nu splitte op i enkelte dele ved hjælp fra `urltools`-pakkens funktion `url_parse`:
+
+```{r}
+url <- "https://www.imdb.com/find?q=K%C3%B8d+%26+Blod&ref_=nv_sr_sm"
+
+parsed_url <- url_parse(url)
+
+str(parsed_url)
+```
+
+I den del der hedder `parameter` kan man med nød og næppe se, at der i hvert fald står "Blod". Dette skyldes at titlen er blevet lavet om til en såkaldt URL-encoding eftersom URL'er ikke kan indeholde ÆØÅ og specialtegn. Således kommer et lille "ø" i en url til være "%C3B8", mens specialtegnet "&" kommer til at være "%26"
+
+**"Kød & Blod"** bliver altså omfortoklet i URLen til **"K%C3%B8d+%26+Blod"**. Den resterende del af URLen, "&ref_=nv_sr_sm", skal vi ikke beskæftige os med her. 
+
+Overordnet set ville alle søgeresultater se således ud:
+
+> htt<span>ps://www.imdb.com/find?q=[Filmens titel i URL-encoding]&ref_=nv_sr_sm
+
+Efter som vi har filmenes titler skal vi have URL-encodet dem og indsat dem i modellen her overfor. Derved får vi en liste der indeholder URL der henviser til søgninger på hver enkelt filmtitel. Ud fra disse links til søgeresultater kan vi så udtrække linket til filmens egentlige IMDB-side i stedet for blot søgningen. 
+
+Før vi kan gøre dette skal vi dog have konstrueret denne liste. Dette kan gøres nemt og bekvemt med urltools funktion `url_encode`, der encoder titlerne, samtidig med, at vi skaber søge-URLen efter overstående mønster: 
+
+```{r}
+sample %>% 
+  mutate(imdb_search_url = paste0("https://www.imdb.com/find?q=", url_encode(Titel), "&ref_=nv_sr_sm")) %>% 
+  select(Titel, imdb_search_url, everything()) -> sample
+sample
+```
+
+# Udtræk af af links til filmene fra deres søge-sider:
+
+Nu hvor vi har links til søgeresultaterne på alle filmene skal vi finde ud af hvordan man udtrækker links til deres egentlige IMDB-sider. Igen tester vi med *Kød & Blod*-søgning:
+
+For grundlæggende introduktion af rvest pakken se: https://blog.rstudio.com/2014/11/24/rvest-easy-web-scraping-with-r/
+
+```{r}
+test <- read_html("https://www.imdb.com/find?q=Kød%20%26%20blod&ref_=nv_sr_sm")
+```
+
+
+Efter lidt fiksfaksen rundt med CSS-selectoren finder vi frem til følgende, der udtrækker stien hen til *Kød & Blod*s egentlige IMDB-side. Resultatet mangler domænet og stien - "imdb.com/title" - det tilføjer vi senere
+```{r}
+(test %>% 
+  html_nodes('td.result_text a'))[[1]] %>% 
+  html_attr("href")
+```
+
+
+Næste skridt er nu at udføre denne udtrækning for alle søgeresultaterne, hvorved vi får linksene til alle filmenes egentlige IMDB-sider ud. 
+
+Først udtrækker vi `imdb_search_url`'erne således vi kan loope henover dem:
+```{r}
+sample$imdb_search_url -> url
+```
+
+
+Næste skridt er at loopet der udfører udtrækning af URL til den egentlige IMDB-side. Hele molevitten gemmes i et element vi kalder `imdb_movie_url`
+
+```{r}
+imdb_movie_url <- c()
+
+for (chr in url) {
+  (read_html(chr) %>% 
+  html_nodes('td.result_text a'))[[1]] %>% 
+  html_attr("href") -> url1 
+
+ imdb_movie_url <- append(imdb_movie_url, url1)
+ 
+ Sys.sleep(1)
+}
+```
+
+I elementet `imdb_movie_url` ligger nu links til de enkelte films IMDB-sider, men før vi kan loope hen over dem skal vi vide, hvad der skal trækkes ud. 
+
+Her tilføjer vi den til vores data frame `sample`og tilføjer domænet og stien - "imdb.com/title"
+
+```{r}
+sample %>%
+  add_column(imdb_movie_url = imdb_movie_url) %>% 
+  mutate(imdb_movie_url = paste0("https://www.imdb.com", imdb_movie_url)) -> sample
+```
+
+
+#Udtræk af IMDB-score og beskrivelse fra IMDB-sider
+
+For at finde ud af, hvordan man trækker IMDB-score og beskrivelse ud fra en IMDB-side, så tester vi her med filmen *The Peanut Butter Falcon*
+For grundlæggende introduktion af rvest pakken se: https://blog.rstudio.com/2014/11/24/rvest-easy-web-scraping-with-r/
+
+```{r}
+test <- read_html("https://www.imdb.com/title/tt4364194/?ref_=fn_al_tt_1")
+```
+
+
+## IMDB-Score
+```{r}
+test %>% 
+  html_node("strong span") %>%  
+  html_text %>% 
+  as.numeric()
+```
+
+## IMDB-beskrivelse
+```{r}
+test %>% 
+  html_node(".summary_text") %>%  
+  html_text %>%
+  str_remove_all("\n") %>% 
+  str_remove_all("\\s{3,}")
+```
+
+
+Udtrækker de fulde links til filmenes egentlig IMDB-sider for at kunne loope henover dem:
+```{r}
+url_movie_pages <- sample$imdb_movie_url
+```
+
+Loop der udtrækker IMDB-score og beskrivelse:
+```{r}
+imdb_score <- c()
+imdb_description <- c()
+
+for (chr in url_movie_pages) {
+  #IMDB SCORE
+  read_html(chr) %>% 
+  html_node("strong span") %>%  
+  html_text %>% 
+  as.numeric() -> score
+  
+  #Description
+  
+  read_html(chr) %>% 
+  html_node(".summary_text") %>%  
+  html_text %>%
+  str_remove_all("\n") %>% 
+  str_remove_all("\\s{3,}") -> description
+
+ imdb_score <- append(imdb_score, score)
+ imdb_description <- append(imdb_description, description)
+ 
+ Sys.sleep(1)
+}
+```
+
+
+Tilføjer dem som kolonner i vores dataframe: Voilá:
+```{r}
+sample %>% 
+  add_column(imdb_score = imdb_score) %>% 
+  add_column(imdb_description = imdb_description) %>% 
+  select(Titel, Premiere, imdb_score, Genre, imdb_description, imdb_movie_url) -> sample
+sample
+```
+
