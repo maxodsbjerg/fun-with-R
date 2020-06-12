@@ -1,0 +1,236 @@
+---
+title: "twitterscrape"
+author: "Max Odsbjerg Pedersen"
+date: "25 okt 2019"
+output: 
+  html_document:
+    toc: true
+    number_sections: true
+    toc_float:
+      collapsed: false
+    fig_caption: true
+---
+
+# Using twitter-api - #dkpol as exampel
+
+The following is an exampel of mining twitter data through it's api using the #dkpol as an exampel. 
+This exampel largely follows:
+https://www.earthdatascience.org/courses/earth-analytics/get-data-using-apis/text-mining-twitter-data-intro-r/
+<br> 
+This work is done in the programming language R
+<br>
+First of all we read in needed packages. 
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# load twitter library - the rtweet library is recommended now over twitteR
+library(rtweet)
+# plotting and pipes - tidyverse!
+library(tidyverse)
+# text mining library
+library(tidytext)
+# plotting packages
+library(igraph)
+library(ggraph)
+
+```
+<br>
+
+# Importing data from twitter
+Using rtweet function to read in dkpol-tweets.
+```{r echo=TRUE, warning=FALSE}
+dkpoltweets <- search_tweets(q = "#dkpol", n = 10000,
+                                      lang = "da",
+                                      include_rts = FALSE)
+```
+
+<br>
+Viewing the first six entries to make sure that we have the right thing
+```{r}
+head(dkpoltweets$text)
+```
+<br>
+For more information on what the rtweet-package can do see: https://rtweet.info/
+
+# Data wrangling and cleaning
+Next step is to use tidy text for examining our tweets. The tidy text format is defined as:
+
+> We thus define the tidy text format as being a table with one-token-per-row. A token is a meaningful unit of text, such as a word, that we are interested in using for analysis, and tokenization is the process of splitting text into tokens. This one-token-per-row structure is in contrast to the ways text is often stored in current analyses, perhaps as strings or in a document-term matrix. For tidy text mining, the token that is stored in each row is most often a single word, but can also be an n-gram, sentence, or paragraph. In the tidytext package, we provide functionality to tokenize by commonly used units of text like these and convert to a one-term-per-row format. - https://www.tidytextmining.com/tidytext.html#tidyausten
+
+```{r}
+dkpoltweets_ttm <- dkpoltweets %>%
+  select(text) %>%
+  unnest_tokens(word,text)
+
+dkpoltweets_ttm
+```
+<br> We now see how each word has it's own row. This makes it easy to do an visualisation of the count of the words used in dkpol:
+
+```{r, message=FALSE, warning=FALSE}
+dkpoltweets_ttm %>%
+  count(word, sort = TRUE) %>%
+  top_n(15) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(x = word, y = n)) +
+  geom_col() +
+  xlab(NULL) +
+  coord_flip() +
+      labs(x = "Count",
+      y = "Unique words",
+      title = "Count of unique words found in dkpol tweets")
+```
+<br>Okay. There are clearly words in those tweets that arent interesting. Lets clean up our data.  First we remove all the links in the tweets:
+```{r}
+dkpoltweets_ttm <- dkpoltweets %>% 
+  mutate(text = 
+           str_remove_all(
+                          text, 
+                          pattern = 
+                            "https.*")) %>% 
+  mutate(text = 
+           str_remove_all(
+                          text, 
+                          pattern = 
+                            "http.*")) %>% 
+  unnest_tokens(word,text)
+```
+
+But what about those stop words like "det", "den" and "og"? We need to import a danish stop word list.:
+
+```{r, message= FALSE}
+stopord <- read_csv("https://gist.githubusercontent.com/maxodsbjerg/f2271ec1a1d76af4b91eaa78cf6f2016/raw/4d1fb3287abbce75d7b18d8147090c952e1652ff/stopord.txt")
+```
+This list is made specific for this analysis and therefore contain words like (dkpol, will be in every tweet, and dkmedier).
+By using antijoin we are able to remove all the stop words
+
+```{r, message=FALSE}
+dkpoltweets_ttm <- dkpoltweets_ttm %>% 
+  anti_join(stopord)
+  
+```
+<br>
+
+# Visualisation
+Lets try the same visualisation again:
+```{r, message=FALSE, warning=FALSE}
+dkpoltweets_ttm %>%
+  count(word, sort = TRUE) %>%
+  top_n(15) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(x = word, y = n)) +
+  geom_col() +
+  xlab(NULL) +
+  coord_flip() +
+      labs(x = "Count",
+      y = "Unique words",
+      title = "Count of unique words found in dkpol tweets")
+```
+<br>
+"24syv" is one of the most talked about words, which isn't surprising given it's recent death blow and the controversies about it. 
+
+
+# Network of words
+Before we can make the network of words, we need to clean the text for links and since this is an analysis of word pairs, we also clean terms in two word that covers the same thing. For example "24 7", needs to be "24_7" 
+```{r}
+dkpoltweets %>%
+  mutate(text = 
+           str_remove_all(
+                          text, 
+                          pattern = 
+                            "https.*")) %>% 
+  mutate(text = 
+           str_remove_all(
+                          text, 
+                          pattern = 
+                            "http.*")) %>%
+   mutate(text = 
+           str_replace_all(
+                          text, 
+                          pattern = 
+                            "(24) (7)", "\\1\\2")) %>%
+  mutate(text = 
+           str_replace_all(
+                          text, 
+                          pattern = 
+                            "(24)/(7)", "\\1_\\2")) %>%
+   mutate(text = 
+           str_replace_all(
+                          text, 
+                          pattern = 
+                            "(Simon) (Emil) (Ammitzbøll-Bille)", "\\1_\\2_\\3")) %>%
+  mutate(text = 
+           str_replace_all(
+                          text, 
+                          pattern = 
+                            "(Simon) (Emil)", "\\1_\\2")) %>%
+  select(text)-> dkpol_clean
+  
+```
+
+```{r}
+dkpoltweets_bigrams <- dkpol_clean %>% 
+  unnest_tokens(bigram, text, token = "ngrams", n = 2)
+```
+
+```{r}
+bigram_separated <- dkpoltweets_bigrams %>% 
+  separate(bigram, c("word1", "word2"), sep = " ")
+```
+
+```{r}
+
+bigram_filtered <- bigram_separated %>%
+  filter(!word1 %in% stopord$word) %>%
+  filter(!word2 %in% stopord$word)
+
+# new bigram counts:
+bigram_counts <- bigram_filtered %>% 
+  count(word1, word2, sort = TRUE)
+
+bigram_counts
+
+```
+
+
+
+
+Super fun!  Lets do trigrams! 
+```{r}
+dkpol_clean %>%
+  unnest_tokens(trigram, text, token = "ngrams", n = 3) %>%
+  separate(trigram, c("word1", "word2", "word3"), sep = " ") %>%
+  filter(!word1 %in% stopord$word,
+         !word2 %in% stopord$word,
+         !word3 %in% stopord$word) %>%
+  count(word1, word2, word3, sort = TRUE)
+```
+
+```{r}
+dkpol_clean %>%
+  unnest_tokens(trigram, text, token = "ngrams", n = 3) %>%
+  separate(trigram, c("word1", "word2", "word3"), sep = " ") %>%
+  filter(!word1 %in% stopord$word,
+         !word2 %in% stopord$word,
+         !word3 %in% stopord$word) %>%
+  filter(word3 == "venstre")
+```
+
+Okay okay. Let's do that network analysis 
+
+```{r}
+bigram_graph <- bigram_counts %>% 
+  filter(n > 15) %>%
+  graph_from_data_frame()
+```
+
+```{r}
+set.seed(2016)
+
+a <- grid::arrow(type = "closed", length = unit(.15, "inches"))
+
+ggraph(bigram_graph, layout = "fr") +
+  geom_edge_link(aes(edge_alpha = n), show.legend = FALSE,
+                 arrow = a, end_cap = circle(.07, 'inches')) +
+  geom_node_point(color = "lightblue", size = 5) +
+  geom_node_text(aes(label = name), vjust = 1, hjust = 1) +
+  theme_void()
+```
+

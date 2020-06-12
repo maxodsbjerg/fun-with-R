@@ -1,0 +1,278 @@
+---
+title: "dkpol daily compared"
+author: "Max Odsbjerg Pedersen"
+date: "2/12/2020"
+output: html_document
+---
+
+# Using twitter-api - #dkpol as exampel
+
+The following is an exampel of mining twitter data through it's api using the #dkpol as an exampel. 
+This exampel largely follows:
+https://www.earthdatascience.org/courses/earth-analytics/get-data-using-apis/text-mining-twitter-data-intro-r/
+<br> 
+This work is done in the programming language R
+<br>
+First of all we read in needed packages. 
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# load twitter library - the rtweet library is recommended now over twitteR
+library(rtweet)
+# plotting and pipes - tidyverse!
+library(tidyverse)
+# text mining library
+library(tidytext)
+# Fiddling with dates
+library(lubridate)
+#visualisation
+library(ggwordcloud)
+```
+<br>
+
+# Importing data from twitter
+Using rtweet function to read in dkpol-tweets.
+```{r echo=TRUE, warning=FALSE}
+dkpoltweets <- search_tweets(q = "#dkpol", n = 10000,
+                                      lang = "da",
+                                      include_rts = FALSE)
+```
+
+For more information on what the rtweet-package can do see: https://rtweet.info/
+
+<br>
+Viewing the first entries to make sure that we have the right thing
+```{r}
+head(dkpoltweets)
+```
+<br>
+
+
+Seems to be the right thing. But the tweets arent organised after date. Let's fix that: 
+```{r}
+dkpoltweets %>% 
+  arrange(desc(created_at)) -> dkpoltweets
+
+```
+<br>
+```{r}
+dkpoltweets
+```
+<br>
+All right. The first tweet is from today(2020-02-17). Lets see when our oldest tweet is from. We do this by using the `tail` function:
+```{r}
+tail(dkpoltweets)
+```
+
+Next step is to clean the data 
+
+
+
+# Data wrangling and cleaning
+
+## Wrangling with dates
+
+Since we want to work with entire days of tweets we want to filter out Tweets from today and tweets from the seventh of february since the last tweet is from 20:24 and therefore we are missing tweets between 20.24 and 00.00 on the seventh. Therefore we will be filtering out these two days.
+First step is using the lubridate package to extract the day from the `created_at`-column. This makes it easier to filter later. At the same time we filter out tweets from the seventh and the seventeenth using the new variable `day`:
+
+```{r}
+dkpoltweets %>% 
+  mutate(day = day(created_at)) %>% 
+  select(day, everything()) %>% 
+  filter(!(day < 8 | day > 16)) -> dkpoltweets8_16
+```
+<br>
+Lets make sure that worked. First we check if tweets from the seventeenth is gone: 
+```{r}
+head(dkpoltweets8_16)
+```
+
+
+<br>
+Looks good. Now let's check if tweets from the seventh are gone:
+```{r}
+tail(dkpoltweets8_16)
+```
+
+Very well. We now have a dataframe containing nine entire days of tweets. Lets move on! 
+
+## The tidy text format
+
+Next step is to use tidy text for examining our tweets. The tidy text format is defined as:
+
+> We thus define the tidy text format as being a table with one-token-per-row. A token is a meaningful unit of text, such as a word, that we are interested in using for analysis, and tokenization is the process of splitting text into tokens. This one-token-per-row structure is in contrast to the ways text is often stored in current analyses, perhaps as strings or in a document-term matrix. For tidy text mining, the token that is stored in each row is most often a single word, but can also be an n-gram, sentence, or paragraph. In the tidytext package, we provide functionality to tokenize by commonly used units of text like these and convert to a one-term-per-row format. - https://www.tidytextmining.com/tidytext.html#tidyausten
+
+```{r}
+dkpoltweets8_16 %>%
+  unnest_tokens(word,text) %>% 
+  select(word, everything())
+```
+<br> 
+We now see how each word has it's own row. This makes it easy to do an visualisation of the count of the words used in dkpol:
+
+```{r, message=FALSE, warning=FALSE}
+dkpoltweets8_16 %>%
+  unnest_tokens(word, text) %>% 
+  count(word, sort = TRUE) %>%
+  top_n(15) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(x = word, y = n)) +
+  geom_col() +
+  xlab(NULL) +
+  coord_flip() +
+      labs(x = "Count",
+      y = "Unique words",
+      title = "Count of unique words found in dkpol tweets")
+```
+<br>
+Okay. There are clearly words in those tweets that arent interesting. Lets clean up our data.  First we remove all the links in the tweets:
+```{r}
+dkpoltweets8_16_cleaned <- dkpoltweets8_16 %>% 
+  mutate(text = 
+           str_remove_all(
+                          text, 
+                          pattern = 
+                            "https:")) %>% 
+  mutate(text = 
+           str_remove_all(
+                          text, 
+                          pattern = 
+                            "t.co.+"))
+```
+<br>
+But what about those stop words like "det", "den" and "og"? We need to import a danish stop word list.:
+
+```{r, message= FALSE}
+stopord <- read_csv("https://gist.githubusercontent.com/maxodsbjerg/f2271ec1a1d76af4b91eaa78cf6f2016/raw/4d1fb3287abbce75d7b18d8147090c952e1652ff/stopord.txt")
+```
+<br>
+This list is made specific for this analysis and therefore contain words like (dkpol, will be in every tweet, and dkmedier).
+By using antijoin we are able to remove all the stop words
+
+<br>
+
+# Visualisation of most used words
+Lets try the same visualisation again:
+
+```{r, message=FALSE}
+dkpoltweets8_16_cleaned %>%
+  unnest_tokens(word, text) %>% 
+  anti_join(stopord) %>% 
+  select(word, everything()) %>% 
+  count(word, sort = TRUE) %>%
+  top_n(15) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(x = word, y = n)) +
+  geom_col() +
+  xlab(NULL) +
+  coord_flip() +
+      labs(x = "Count",
+      y = "Unique words",
+      title = "Count of unique words found in dkpol tweets")
+  
+```
+<br>
+Okay apparently alot of talk about dkgreen, år, and sas. This isnt really interesting given that SAS has been in a shitstorm lately due to a new advertisement. Besides that we see some  obvius hashtags in there: dkbiz. Lets try to use the term frequency - inversed document frequency (tf-idf) to see which word were speciale for each of the days in the period 8th of February until 16th of February. But before we do that let's just quickly see who posts the most: 
+
+```{r}
+dkpoltweets8_16_cleaned %>%
+  count(screen_name, sort = TRUE)
+```
+<br>
+Before moving on to the next part of the analysis it is important to notice that we in the next part will examine what distinguises the days in #dkpol from each other. We are therefore impudent ignoring that individual Twitter-users or groups of users can dominate the hashtag's content on specific days. The above count of who has tweeted the most in the period is to show that there is not a single user holding the majority of the tweets in the period. It it nonetheless worth noting that the users tweeting the most is resposible for 258 tweets out of a total of 6359 tweet, which corresponds to 4,1 % of the total tweets. 
+<br>
+
+# Term frequency - inversed document frequency (tf-idf) - comparing days of tweets to each other
+
+>The statistic tf-idf is intended to measure how important a word is to a document in a collection (or corpus) of documents, for example, to one novel in a collection of novels or to one website in a collection of websites.
+
+-from [*Text Mining with R*](https://www.tidytextmining.com)
+
+In our specific case we are interpretating the total of all tweets in one day as one document.
+
+Before we can calculate the tf-idf, we need find the words that appear most commonly per day in the days 5th of February to 11th of February.
+
+```{r}
+dkpoltweets8_16_cleaned %>%
+  unnest_tokens(word, text) %>% 
+  count(day, word, sort = TRUE) %>% 
+  group_by(day) %>% 
+  summarise(total = sum(n)) -> total_words
+total_words
+```
+<br>
+Next, we need to add the total number of words to our data frame, which is done with `left_join`:
+
+```{r}
+dkpoltweets8_16_cleaned %>% 
+  unnest_tokens(word, text) %>% 
+  count(day, word, sort = TRUE) %>% 
+  left_join(total_words, by = "day") -> dkpol8_16_word_counts
+```
+<br>
+Let's take a quick view of the new data frame:
+
+```{r}
+head(dkpol8_16_word_counts, n=50)
+```
+<br>
+Not surprisingly dkpol is on the top of the list. The days are pretty even in terms of total words. Now we have the numbers we need to calculate the frequencies of the words. Here we calculate "at" in day 6:
+
+$$\textrm{tf}(6, \textrm{"at"})=\frac{816}{32217}=0.02532824$$
+By calculating the frequency of terms we can compare them across days. However, it is not particularly interesting to compare the use of the word "at" between the days. We therefore need a way to "punish" words that occur frequently throughout the days. For this we can use inversed document frequency (idf):
+
+$$\textrm{idf}(\textrm{term})=\ln(\frac{n}{N})$$ 
+Where $n$ is the total number of documents (in our case days) and $N$ is the number of days in which the word appears. For "at" it gives an idf value of 0.
+$$\textrm{idf}("\textrm{at}")=\ln(\frac{7}{7})=0$$ 
+<br>
+Thus, we get punished words that occur in several of the days. Words that occur in all the years, therefore, cannot tell us anything special about a given year. These words will have an idf of 0.
+
+Their tf_idf, defined as
+
+$$\textrm{tf}\_\textrm{idf} = \textrm{tf} \times \textrm{idf}$$,
+
+gives the value of 0 as well. 
+
+Next step is to calculate tf and idf for all words: 
+
+```{r}
+dkpol8_16_word_counts %>% 
+  bind_tf_idf(word, day, n) -> dkpol8_16_tfidf
+
+head(dkpol8_16_tfidf, n= 100)
+```
+<br>
+Let's try with an descending order instead: 
+
+```{r}
+dkpol8_16_tfidf <- dkpol8_16_tfidf %>% 
+  select(-total) %>%
+  arrange(desc(tf_idf))
+
+head(dkpol8_16_tfidf, n= 100)
+```
+
+# Visualisation of tf-idf
+
+```{r, warning=FALSE}
+dkpol8_16_tfidf %>%
+  arrange(desc(tf_idf)) %>%
+  mutate(word = factor(word, levels = rev(unique(word)))) %>% 
+  group_by(day) %>% 
+  top_n(10) %>% 
+  ungroup %>%
+  ggplot(aes(label = word, size = tf_idf, color = tf_idf)) +
+  geom_text_wordcloud_area() +
+  scale_size_area(max_size = 8.5) +
+  theme_minimal() +
+  facet_wrap(~day, ncol = 3, scales = "free") +
+  scale_color_gradient(low = "darkred", high = "red") +
+  labs(
+      title = "#dkpol-tweets: most important words pr. day from February 8 - February 16",
+       subtitle = "Importance determined by term frequency (tf) - inversed document frequency(idf)")
+```
+
+```{r, eval=FALSE}
+ggsave("tfidf_dkpol_wordclouds.pdf", width = 30, height = 20, units = "cm")
+ggsave("tfidf_dkpol_wordclouds.png", width = 30, height = 20, units = "cm")
+```
+
+
