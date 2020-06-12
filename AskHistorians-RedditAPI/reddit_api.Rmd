@@ -1,0 +1,140 @@
+---
+title: "Testing the Reddit API with RedditExtractoR"
+author: "Max Odsbjerg Pedersen"
+date: "2/24/2020"
+output: html_document
+---
+
+# Reading in packages 
+R has it basic functions, but the community develops extra packages that expands R's functionality. Amongst others we read in the RedditExptractoR, which makes it easy to work with Reddit's API.
+
+```{r, message=FALSE}
+library(RedditExtractoR)
+library(tidyverse)
+library(writexl)
+```
+
+The following exploration is based on the documentation found at: <br>
+[RedditExtractor](https://www.rdocumentation.org/packages/RedditExtractoR/versions/2.1.5)
+<br>
+
+# Exploring the Reddit Functions 
+
+The following function extracts the URL of threads within a subreddit. Can also be spiced up with a search term. 
+```{r, message=FALSE, warning=FALSE}
+AskHistorians_links <- reddit_urls(
+  subreddit="AskHistorians",
+  page_threshold = 1)
+```
+
+Let's examine the result from this: 
+```{r}
+str(AskHistorians_links)
+```
+We see that we get 25 threads out. This is controlled by the `page_threshold`function. The number of threads returned will rise with 25 each time the `page_threshold` is rised with 1.
+The 25 threads returned contains a date, number of comments, title, their subreddit and the URL to the post.
+
+RedditExtractoR can also extract single threats with all it's comments. Since AskHistorians is heavily moderated it is hard to find alot of threads containing more than a few comments. 
+An exception is the post [Who were the slaves in medieval England?](https://www.reddit.com/r/AskHistorians/comments/f7zn37/who_were_the_slaves_in_medieval_england/) which, at the time of writing, entails 100 comments. Let's read in this thread: 
+
+```{r}
+AskHistorians_slaves <- reddit_content("http://www.reddit.com/r/AskHistorians/comments/f7zn37/who_were_the_slaves_in_medieval_england/")
+```
+
+<br>
+Let's examine what this gives us: 
+```{r}
+str(AskHistorians_slaves)
+```
+It returns 18 variables containing good things like the text of the comment, the comments score and the user. **Weird thing going on: Says number of comments is 100. Why does the dataframe only contain 76 rows?** <br>
+By looking at other threads in the browser and counting actual comments, there seem to be som discrepancy between the listed number of comments and the actual number of comments. Fx. [In the Band of Brothers series, they come across a group of Nazi prisoners- one of whom was American. How many Americans were estimated to be in the Nazi ranks? We’re they assigned to special units? If they were captured, were they treated differently?](https://www.reddit.com/r/AskHistorians/comments/f8m9kw/in_the_band_of_brothers_series_they_come_across_a/) list 12 comments, but when you actually count you only get 6. By doing the `reddit_content` on this thread you also get 6: 
+
+```{r, message=FALSE}
+reddit_content("https://www.reddit.com/r/AskHistorians/comments/f8m9kw/in_the_band_of_brothers_series_they_come_across_a/")
+```
+<br>
+Looking in the subreddit *"ideasfortheddmins"* you can read the following in a threads called [The total comment count for a thread should be all of the comments minus removals and deletions](https://www.reddit.com/r/ideasfortheadmins/comments/3iquny/the_total_comment_count_for_a_thread_should_be/): 
+> There are several reasons why the comment count might be off (manual mod removal, automod removal, shadowbanned, >spam, or deleted by user), but so many people assume the individual is shadowbanned.
+>It doesn't seem like a huge issue, but it often becomes a top comment, derails the conversation, and spreads more >misinformation.
+
+It certanly derailed our little experiment. But the good news is that there aren't anything wrong with the data we have extracted from the Reddit-API. Let's us continue with the thread about the medieval slaves. In the next section we will see what we can do with the data from the threads.
+
+# Analysis 
+
+So who does the most commenting? Let's see! 
+
+```{r}
+AskHistorians_slaves %>%
+  count(user, sort = TRUE) %>% 
+  mutate(user = reorder(user, n)) %>%
+  ggplot(aes(x = user, y = n)) +
+  geom_col() +
+  xlab(NULL) +
+  coord_flip() +
+      labs(x = "Users",
+      y = "number of comments",
+      title = "Count of unique comments from users")
+```
+Steelcan909 does most of the commenting which is not that weird since he has provide the first comment which is very thoroughly and the following comments are reactions to this comment. Nonetheless we see that 12 comments have been deleted and that most of the comments are single comments. 
+
+
+
+# User Network 
+RedditExtractoR has a network feature that sketches the network between users in a thread. The plot is pretty neat and interactive. You can click and drag the nodes around and hover over nodes to see the comment. 
+
+```{r}
+AskHistorians_list <- AskHistorians_slaves %>% 
+  user_network(include_author=FALSE, agg=TRUE) # extract the network
+
+AskHistorians_list$plot # explore the plot
+```
+<br>
+But what happens if you combine to threads in the same data frame at try to run the network graph on it? 
+
+```{r}
+reddit_content("https://www.reddit.com/r/AskHistorians/comments/f8yxj2/im_living_3000_years_ago_anywhere_in_the_world/") -> AskHistorians_nails
+```
+
+Does it make sense to plot this thread as a network? 
+```{r}
+AskHistorians_list_nails <- AskHistorians_nails %>% 
+  user_network(include_author=FALSE, agg=TRUE) # extract the network
+
+AskHistorians_list_nails$plot # explore the plot
+```
+<br>
+Now let us try and combine the two dataframes
+```{r}
+AskHistorians_slaves_nails <- bind_rows(AskHistorians_slaves, AskHistorians_nails)
+```
+
+
+
+Now lets try the plot: 
+```{r}
+AskHistorians_list_slaves_nails <- AskHistorians_slaves_nails %>% 
+  user_network(include_author=FALSE, agg=TRUE) # extract the network
+
+AskHistorians_list_slaves_nails$plot # explore the plot
+```
+
+Thats not really useful... 
+
+Of course there can be done alot more analysis on the data. This was just a little taste. 
+
+
+# Saving reddit-data as Excel-spreadsheet
+
+## First of we write the thread about the medieval slaves
+<br>
+```{r}
+write_xlsx(AskHistorians_slaves, "20200223_AskHistorians_who_where_the_slaves_in_medieval_England.xlsx")
+```
+
+## Secon we write out the dataframe containing the latest 25 thread withn the AskHistorian subreddit
+Remember that the code that found the 25 latest thread in the subreddit also can take searchterms. Fx the last 100 threads about the French Revolution. 
+<br>
+```{r}
+write_xlsx(AskHistorians_links, "20200224_AskHistorians_200_threads.xlsx")
+```
+
