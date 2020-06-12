@@ -6,4 +6,5 @@ Contributions are made by:
 * [Max Odsbjerg Pedersen](https://github.com/maxodsbjerg)
 
 
-The structure of this repository will have folders representing logical subjects. 
+The structure of this repository will have folders representing logical subjects. Thus the first segment of the foldername is written with upper camel case and descripes the subject matter, while the hyphens afterwards separates keywords denoting overall subject such as "webscraping" or central package names eg. "RedditExtractoR" 
+
