@@ -1,0 +1,53 @@
+---
+title: "Importing text with readtext"
+author: "Max Odsbjerg Pedersen"
+date: "3/30/2020"
+output: 
+    html_document:
+      df_print: paged
+---
+
+In this document we are working with importing text from several text files. The packages used is `readtext` that can import a wide range text files. Documentation for the packages can be found on the documentation page ["Read text files with readtext()"](https://cran.r-project.org/web/packages/readtext/vignettes/readtext_vignette.html). The examples in this R-markdown largely follows the examples from the documentation pages, but this R-markdown is meant to be shared together with the .Rproj files and the data used to import in the examples in order to provide users with a live example of importing the text files. 
+
+[Click here to download the project as a zip file](https://hax.odsbjerg.dk/ImportingTextFiles.zip)
+
+First we load in the library:
+```{r, message=FALSE}
+library(readtext)
+
+#Tidyverse is always good to load
+library(tidyverse)
+```
+
+Next thing is to observe the files located in the "several files"-folder within the "data" folder. The names of the files all follow the same system. Here is an example: 
+
+>Interview_14-04-2019_DAR_west.docx
+
+So the first thing in the filename is "Interview", which states the type of the document. All of the texts in the folder are interviews. The next thing in the filename is the date of the interview followed by the initials of the interviewed person. The last thing before the file extension is the region, where the interview has been conducted. The most important thing is all these units of information in the file are seperated by an underscore "_".  
+In the following chunk we run the readtext-function by giving it the path to the folder, where the files are located. The next step is to tell readtext, that it should creating columns based on in formation from the filenames. Next we tell readtext what these columns should be called. Before readtext is able to do this it needs to know what separates the information in the filename. In our case it is the underscore "_". Finally we specify the encoding, which might be relavant for you depending on what language your text files consist of.  
+
+```{r}
+readtext("data/several_files/*.docx",
+         docvarsfrom = "filenames", 
+         docvarnames = c("type", "date", "initials", "region"),
+         dvsep = "_", 
+         encoding = "UTF-8") -> interviews
+
+interviews
+```
+
+As a result we get a nice dataframe containing the metadata from the filenames and the text as well (here it is just mock up text). One problem thoug is that the date column is of the character datatype and besideds that it is not arranged chronologically. The try to fix that.  
+
+In terms of working with dates the package `lubridate` comes in very handy. It makes it easy to wrangle the many different time formats used around the world and convert them to the ISO-standard. Let's do that: 
+
+```{r, message=FALSE}
+library(lubridate)
+
+interviews %>% 
+  mutate(date = dmy(date)) %>% 
+  # after the date column is changed into the date-datatype we can arrange the dataset chronologically
+  arrange(date) %>%
+  select(date, everything())
+```
+Now the interviews are arranged from the earliest to the latest. You are now ready to continue on with you text mining project! I recommend using the [Tidy Text Mining with R](https://www.tidytextmining.com) in order to continue the text mining voyage. 
+
